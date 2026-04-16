@@ -1,0 +1,50 @@
+project: 'Logstash'
+products:
+  - id: logstash
+cross_links:
+  - beats
+  - docs-content
+  - ecs
+  - elasticsearch
+  - integration-docs
+  - logstash-docs-md
+  - search-ui
+toc:
+  - toc: reference
+  - toc: release-notes
+  - toc: extend
+subs:
+  logstash-ref:   "https://www.elastic.co/guide/en/logstash/current"
+  ecloud:   "Elastic Cloud"
+  ech:   "Elastic Cloud Hosted"
+  esf:   "Elastic Serverless Forwarder"
+  ess:   "Elasticsearch Service"
+  serverless-full:   "Elastic Cloud Serverless"
+  serverless-short:   "Serverless"
+  es-serverless:   "Elasticsearch Serverless"
+  agent:   "Elastic Agent"
+  fleet:   "Fleet"
+  fleet-server:   "Fleet Server"
+  integrations:   "Integrations"
+  stack:   "Elastic Stack"
+  xpack:   "X-Pack"
+  es:   "Elasticsearch"
+  kib:   "Kibana"
+  ls:   "Logstash"
+  beats:   "Beats"
+  filebeat:   "Filebeat"
+  metricbeat:   "Metricbeat"
+  winlogbeat:   "Winlogbeat"
+  security:   "X-Pack security"
+  security-features:   "security features"
+  monitoring:   "X-Pack monitoring"
+  monitor-features:   "monitoring features"
+  stack-monitor-features:   "Elastic Stack monitoring features"
+  ilm:   "index lifecycle management"
+  ilm-cap:   "Index lifecycle management"
+  ilm-init:   "ILM"
+  dlm:   "data lifecycle management"
+  dlm-init:   "DLM"
+  docker-repo: "docker.elastic.co/logstash/logstash"
+  ess-leadin-short:   "Elastic Cloud Hosted is available on AWS, GCP, and Azure, and you can try it for free at https://cloud.elastic.co/registration."
+  ess-leadin: "You can run Elasticsearch on your own hardware or use Elastic Cloud Hosted, available on AWS, GCP, and Azure. Try Elastic Cloud Hosted for free: https://cloud.elastic.co/registration."

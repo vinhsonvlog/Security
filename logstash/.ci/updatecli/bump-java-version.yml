@@ -1,0 +1,99 @@
+---
+name: Update java version file
+pipelineid: "logstash/jdk-version-updates-{{ requiredEnv "LOGSTASH_BRANCH" }}"
+
+scms:
+  default:
+    kind: github
+    spec:
+      user: '{{ requiredEnv "GITHUB_ACTOR" }}'
+      username: '{{ requiredEnv "GITHUB_ACTOR" }}'
+      owner: '{{ .scm.owner }}'
+      repository: '{{ .scm.repository }}'
+      token: '{{ requiredEnv "GITHUB_TOKEN" }}'
+      branch: '{{ requiredEnv "LOGSTASH_BRANCH" }}'
+      commitusingapi: true
+      force: false
+
+actions:
+  default:
+    title: 'Update bundled JDK to {{ source "latest_jdk_version" }} build {{ source "latest_jdk_build" }}'
+    kind: github/pullrequest
+    scmid: default
+    spec:
+      automerge: false
+      labels:
+        - automation
+
+sources:
+  jdk_major:
+    kind: yaml
+    spec:
+      file: "versions.yml"
+      key: "$.bundled_jdk.revision"
+    transformers:
+      - findsubmatch:
+          pattern: '^(\d+)\.\d+\.\d+$'
+          captureindex: 1
+
+  latest_jdk_version:
+    kind: json
+    spec:
+      file: 'https://jvm-catalog.elastic.co/jdk/latest_adoptiumjdk_{{ source "jdk_major" }}_linux'
+      key: 'version'
+
+  latest_jdk_build:
+    kind: json
+    spec:
+      file: 'https://jvm-catalog.elastic.co/jdk/latest_adoptiumjdk_{{ source "jdk_major" }}_linux'
+      key: 'revision'
+
+conditions:
+  # Verify all platform builds are available before raising a PR
+  # The source checks linux-x86_64, these conditions check remaining platforms
+  linux_aarch64_available:
+    name: "Check linux-aarch64 JDK is available"
+    kind: shell
+    disablesourceinput: true
+    spec:
+      command: curl --silent --fail --head 'https://jvm-catalog.elastic.co/jdk/adoptiumjdk-{{ source "latest_jdk_version" }}+{{ source "latest_jdk_build" }}-linux-aarch64'
+
+  darwin_x86_64_available:
+    name: "Check darwin-x86_64 JDK is available"
+    kind: shell
+    disablesourceinput: true
+    spec:
+      command: curl --silent --fail --head 'https://jvm-catalog.elastic.co/jdk/adoptiumjdk-{{ source "latest_jdk_version" }}+{{ source "latest_jdk_build" }}-darwin'
+
+  darwin_aarch64_available:
+    name: "Check darwin-aarch64 JDK is available"
+    kind: shell
+    disablesourceinput: true
+    spec:
+      command: curl --silent --fail --head 'https://jvm-catalog.elastic.co/jdk/adoptiumjdk-{{ source "latest_jdk_version" }}+{{ source "latest_jdk_build" }}-darwin-aarch64'
+
+  windows_x86_64_available:
+    name: "Check windows-x86_64 JDK is available"
+    kind: shell
+    disablesourceinput: true
+    spec:
+      command: curl --silent --fail --head 'https://jvm-catalog.elastic.co/jdk/adoptiumjdk-{{ source "latest_jdk_version" }}+{{ source "latest_jdk_build" }}-windows'
+
+targets:
+  update_jdk_revision:
+    name: "Update JDK revision"
+    kind: yaml
+    sourceid: latest_jdk_version
+    scmid: default
+    spec:
+      file: versions.yml
+      key: $.bundled_jdk.revision
+
+  update_jdk_build:
+    name: "Update JDK build"
+    kind: yaml
+    sourceid: latest_jdk_build
+    scmid: default
+    spec:
+      file: versions.yml
+      key: $.bundled_jdk.build

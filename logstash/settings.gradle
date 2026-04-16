@@ -1,0 +1,31 @@
+rootProject.name = "logstash"
+
+include ':logstash-core', 'logstash-core-benchmarks', 'benchmark-cli', 'jvm-options-parser', 'logstash-integration-tests', 'dependencies-report', 'docker:data:logstash:env2yaml'
+project(':logstash-core').projectDir = new File('./logstash-core')
+project(':logstash-core-benchmarks').projectDir = new File('./logstash-core/benchmarks')
+project(':logstash-integration-tests').projectDir = new File('./qa/integration')
+project(':benchmark-cli').projectDir = new File('./tools/benchmark-cli')
+project(':dependencies-report').projectDir = new File('./tools/dependencies-report')
+project(':jvm-options-parser').projectDir = new File('./tools/jvm-options-parser')
+
+Boolean oss = System.getenv('OSS').equals('true')
+
+if (!oss) {
+  include ':logstash-xpack'
+  project(':logstash-xpack').projectDir = new File('./x-pack')
+}
+
+buildscript {
+  repositories {
+    mavenCentral()
+  }
+
+  dependencies {
+    classpath "org.yaml:snakeyaml:2.2"
+  }
+}
+
+// load versions of jdk and jruby asap so we can use them anywhere else in the scripts
+import org.yaml.snakeyaml.Yaml
+def versionsFile = file("$rootDir/versions.yml")
+gradle.ext.versions = new Yaml().load(versionsFile.text)

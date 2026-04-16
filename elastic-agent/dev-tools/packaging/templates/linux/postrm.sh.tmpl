@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+
+set -e
+
+PREFIX=""
+if [[ ${RPM_INSTALL_PREFIX:-/} != "/" ]]; then
+    PREFIX=${RPM_INSTALL_PREFIX}
+fi
+default_symlink="/usr/share/elastic-agent/bin/elastic-agent"
+prefix_symlink="${PREFIX}${default_symlink}"
+
+case "$1" in
+  purge)
+    rm -rf /var/lib/elastic-agent /var/log/elastic-agent /etc/elastic-agent
+    ;;
+
+  # 0 is for rpm uninstall
+  upgrade|remove|failed-upgrade|abort-install|abort-upgrade|disappear|0)
+    if systemctl --quiet is-active elastic-agent; then
+      echo "stopping elastic-agent"
+      systemctl --quiet stop elastic-agent
+    fi
+    # delete symlink if exists
+    if test -L "$default_symlink"; then
+      echo "found symlink $default_symlink, unlink"
+      unlink "$default_symlink"
+    fi
+    if test -L "$prefix_symlink"; then
+      echo "found symlink $prefix_symlink, unlink"
+      unlink "$prefix_symlink"
+    fi
+    if test -L /lib/systemd/system/elastic-agent.service; then
+        echo "Found elastic-agent.service link, unlink"
+        unlink /lib/systemd/system/elastic-agent.service
+    elif [[ ${PREFIX} != "" ]] && test -f /lib/systemd/system/elastic-agent.service; then
+        echo "Found /lib/systemd/system/elastic-agent.service, removing"
+        rm -f /lib/systemd/system/elastic-agent.service
+    fi
+    if test -L /etc/systemd/system/elastic-agent.service; then
+        echo "Found /etc/systemd/system/elastic-agent.service link, unlink"
+        unlink /etc/systemd/system/elastic-agent.service
+    fi
+    ;;
+  *)
+    ;;
+esac
+
+echo "systemd daemon-reload"
+systemctl daemon-reload 2> /dev/null
+exit 0

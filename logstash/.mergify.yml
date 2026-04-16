@@ -1,0 +1,154 @@
+commands_restrictions:
+  backport:
+    conditions:
+      - or:
+        - sender-permission>=write
+        - sender=github-actions[bot]
+defaults:
+  actions:
+    backport:
+      title: "[{{ destination_branch }}] (backport #{{ number }}) {{ title }}"
+      assignees:
+        - "{{ author }}"
+      labels:
+        - "backport"
+pull_request_rules:
+#  - name: ask to resolve conflict
+#    conditions:
+#      - conflict
+#    actions:
+#      comment:
+#        message: |
+#          This pull request is now in conflicts. Could you fix it @{{author}}? 🙏
+#          To fixup this pull request, you can check out it locally. See documentation: https://help.github.com/articles/checking-out-pull-requests-locally/
+#          ```
+#          git fetch upstream
+#          git checkout -b {{head}} upstream/{{head}}
+#          git merge upstream/{{base}}
+#          git push upstream {{head}}
+#          ```
+
+  - name: notify the backport policy
+    conditions:
+      - -label~=^backport
+      - base=main
+    actions:
+      comment:
+        message: |
+          This pull request does not have a backport label. Could you fix it @{{author}}? 🙏
+          To fixup this pull request, you need to add the backport labels for the needed
+          branches, such as:
+          * `backport-8./d` is the label to automatically backport to the `8./d` branch. `/d` is the digit.
+          * If no backport is necessary, please add the `backport-skip` label
+
+  - name: remove backport-skip label
+    conditions:
+      - label~=^backport-\d
+    actions:
+      label:
+        remove:
+          - backport-skip
+
+  - name: notify the backport has not been merged yet
+    conditions:
+      - -merged
+      - -closed
+      - author=mergify[bot]
+      - "#check-success>0"
+      - schedule=Mon-Mon 06:00-10:00[Europe/Paris]
+    actions:
+      comment:
+        message: |
+          This pull request has not been merged yet. Could you please review and merge it @{{ assignee | join(', @') }}? 🙏
+
+  - name: backport patches to 8.16 branch
+    conditions:
+      - merged
+      - base=main
+      - label=backport-8.16
+    actions:
+      backport:
+        branches:
+          - "8.16"
+
+  - name: backport patches to 8.17 branch
+    conditions:
+      - merged
+      - base=main
+      - label=backport-8.17
+    actions:
+      backport:
+        branches:
+          - "8.17"
+
+  - name: backport patches to 8.18 branch
+    conditions:
+      - merged
+      - base=main
+      - label=backport-8.18
+    actions:
+      backport:
+        branches:
+          - "8.18"
+
+  - name: backport patches to 8.19 branch
+    conditions:
+      - merged
+      - base=main
+      - label=backport-8.19
+    actions:
+      backport:
+        branches:
+          - "8.19"
+
+  - name: backport patches to 9.0 branch
+    conditions:
+      - merged
+      - base=main
+      - label=backport-9.0
+    actions:
+      backport:
+        branches:
+          - "9.0"
+
+  - name: backport patches to 9.1 branch
+    conditions:
+      - merged
+      - base=main
+      - label=backport-9.1
+    actions:
+      backport:
+        branches:
+          - "9.1"
+
+  - name: backport patches to 9.2 branch
+    conditions:
+      - merged
+      - base=main
+      - label=backport-9.2
+    actions:
+      backport:
+        branches:
+          - "9.2"
+
+  - name: backport patches to 9.3 branch
+    conditions:
+      - merged
+      - base=main
+      - label=backport-9.3
+    actions:
+      backport:
+        branches:
+          - "9.3"
+
+  - name: forwardport docs changes to main
+    conditions:
+      - merged
+      - label=docs
+      - files~=^docs/
+      - base~=^\d+\.
+    actions:
+      backport:
+        branches:
+          - main
+        title: "[{{ destination_branch }}] (forwardport #{{ number }}) {{ title }}"

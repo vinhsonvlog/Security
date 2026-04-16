@@ -1,0 +1,37 @@
+toc:
+  - file: index.md
+  - file: download.md
+  - file: modes.md
+  - file: config/index.md
+    children:
+      - file: config/default-config-standalone.md
+      - file: config/default-config-k8s.md
+      - file: config/configure-logs-collection.md
+      - file: config/configure-metrics-collection.md
+      - file: config/configure-tracing-collection.md
+      - file: config/authentication-methods.md
+      - file: config/configure-profiles-collection.md
+      - file: config/monitor-internal-metrics.md
+      - file: config/custom-data-streams.md
+      - file: components/migrate-components.md
+      - file: config/proxy.md
+  - file: components.md
+    children:
+      - file: components/apmconfigextension.md
+      - file: components/attributesprocessor.md
+      - file: components/elasticapmconnector.md
+      - file: components/elasticapmintakereceiver.md
+      - file: components/elasticapmprocessor.md
+      - file: components/elasticsearchexporter.md
+      - file: components/filelogreceiver.md
+      - file: components/hostmetricsreceiver.md
+      - file: components/k8sclusterreceiver.md
+      - file: components/k8sobjectsreceiver.md
+      - file: components/kubeletstatsreceiver.md
+      - file: components/prometheusremotewritereceiver.md
+  - file: customization.md
+    children:
+      - file: custom-collector.md
+  - file: upstream-collector.md
+  - title: Troubleshooting
+    crosslink: docs-content://troubleshoot/ingest/opentelemetry/edot-collector/index.md

@@ -1,0 +1,268 @@
+// Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
+// or more contributor license agreements. Licensed under the Elastic License 2.0;
+// you may not use this file except in compliance with the Elastic License 2.0.
+
+package mage
+
+import (
+	"fmt"
+	"go/build"
+	"io"
+	"os"
+	"path"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/magefile/mage/mg"
+	"github.com/magefile/mage/sh"
+)
+
+var (
+	// StackEnvironment specifies what testing environment
+	// to use (like snapshot (default), latest, 5x). Formerly known as
+	// TESTING_ENVIRONMENT.
+	StackEnvironment = EnvOr("STACK_ENVIRONMENT", "snapshot")
+)
+
+func init() {
+	RegisterIntegrationTester(&DockerIntegrationTester{})
+}
+
+// DockerIntegrationTester returns build image
+type DockerIntegrationTester struct {
+	buildImagesOnce sync.Once
+}
+
+// Name returns docker name.
+func (d *DockerIntegrationTester) Name() string {
+	return "docker"
+}
+
+// Use determines if this tester should be used.
+func (d *DockerIntegrationTester) Use(dir string) (bool, error) {
+	dockerFile := filepath.Join(dir, "docker-compose.yml")
+	if _, err := os.Stat(dockerFile); !os.IsNotExist(err) {
+		return true, nil
+	}
+	return false, nil
+}
+
+// HasRequirements ensures that the required docker and docker-compose are installed.
+func (d *DockerIntegrationTester) HasRequirements() error {
+	if err := HaveDocker(); err != nil {
+		return err
+	}
+	if err := HaveDockerCompose(); err != nil {
+		return err
+	}
+	return nil
+}
+
+// StepRequirements returns the steps required for this tester.
+func (d *DockerIntegrationTester) StepRequirements() IntegrationTestSteps {
+	return IntegrationTestSteps{&IntegrationTestStep{}}
+}
+
+// Test performs the tests with docker-compose.
+func (d *DockerIntegrationTester) Test(dir string, mageTarget string, cfg *Settings, env map[string]string) error {
+	var err error
+	d.buildImagesOnce.Do(func() { err = d.dockerComposeBuildImages(cfg) })
+	if err != nil {
+		return err
+	}
+
+	// Determine the path to use inside the container.
+	repo := cfg.RepoInfo
+	dockerRepoRoot := filepath.Join("/go/src", repo.CanonicalRootImportPath)
+	dockerGoCache := filepath.Join(dockerRepoRoot, "build/docker-gocache")
+	magePath := filepath.Join("/go/src", repo.CanonicalRootImportPath, repo.SubDir, "build/mage-linux-"+cfg.Build.GOARCH)
+	goPkgCache := filepath.Join(filepath.SplitList(build.Default.GOPATH)[0], "pkg/mod/cache/download")
+	dockerGoPkgCache := "/gocache"
+
+	// Execute the inside of docker-compose.
+	args := []string{"-p", d.dockerComposeProjectName(cfg), "run",
+		"-e", "DOCKER_COMPOSE_PROJECT_NAME=" + d.dockerComposeProjectName(cfg),
+		// Disable strict.perms because we mount host dirs inside containers
+		// and the UID/GID won't meet the strict requirements.
+		"-e", "BEAT_STRICT_PERMS=false",
+		// compose.EnsureUp needs to know the environment type.
+		"-e", "STACK_ENVIRONMENT=" + StackEnvironment,
+		"-e", "TESTING_ENVIRONMENT=" + StackEnvironment,
+		"-e", "GOCACHE=" + dockerGoCache,
+		// Use the host machine's pkg cache to minimize external downloads.
+		"-v", goPkgCache + ":" + dockerGoPkgCache + ":ro",
+		"-e", "GOPROXY=file://" + dockerGoPkgCache + ",direct",
+		// Do not set ES_USER or ES_PATH in this file unless you intend to override
+		// values set in all individual docker-compose files
+		//		"-e", "ES_USER=admin",
+		//		"-e", "ES_PASS=testing",
+	}
+	args, err = addUIDGidEnvArgs(args)
+	if err != nil {
+		return err
+	}
+	for envVame, envVal := range env {
+		args = append(args, "-e", fmt.Sprintf("%s=%s", envVame, envVal))
+	}
+	args = append(args,
+		"beat", // Docker compose container name.
+		magePath,
+		mageTarget,
+	)
+
+	composeEnv := integTestDockerComposeEnvVars(cfg)
+
+	_, testErr := sh.Exec(
+		composeEnv,
+		os.Stdout,
+		os.Stderr,
+		"docker-compose",
+		args...,
+	)
+
+	err = d.saveDockerComposeLogs(dir, mageTarget, cfg, composeEnv)
+	if err != nil && testErr == nil {
+		// saving docker-compose logs failed but the test didn't.
+		return err
+	}
+
+	// Docker-compose rm is noisy. So only pass through stderr when in verbose.
+	out := io.Discard
+	if mg.Verbose() {
+		out = os.Stderr
+	}
+
+	_, err = sh.Exec(
+		composeEnv,
+		io.Discard,
+		out,
+		"docker-compose",
+		"-p", d.dockerComposeProjectName(cfg),
+		"rm", "--stop", "--force",
+	)
+	if err != nil && testErr == nil {
+		// docker-compose rm failed but the test didn't
+		return err
+	}
+	return testErr
+}
+
+func (d *DockerIntegrationTester) saveDockerComposeLogs(rootDir string, mageTarget string, cfg *Settings, composeEnv map[string]string) error {
+	var (
+		composeLogDir      = filepath.Join(rootDir, "build", "system-tests", "docker-logs")
+		composeLogFileName = filepath.Join(composeLogDir, "TEST-docker-compose-"+mageTarget+".log")
+	)
+
+	if err := os.MkdirAll(composeLogDir, os.ModeDir|os.ModePerm); err != nil {
+		return fmt.Errorf("creating docker log dir: %w", err)
+	}
+
+	composeLogFile, err := os.Create(composeLogFileName)
+	if err != nil {
+		return fmt.Errorf("creating docker log file: %w", err)
+	}
+	defer composeLogFile.Close()
+
+	_, err = sh.Exec(
+		composeEnv,
+		composeLogFile, // stdout
+		composeLogFile, // stderr
+		"docker-compose",
+		"-p", d.dockerComposeProjectName(cfg),
+		"logs",
+		"--no-color",
+	)
+	if err != nil {
+		return fmt.Errorf("executing docker-compose logs: %w", err)
+	}
+
+	return nil
+}
+
+// InsideTest performs the tests inside of environment.
+func (d *DockerIntegrationTester) InsideTest(test func() error, cfg *Settings) error {
+	// Fix file permissions after test is done writing files as root.
+	if runtime.GOOS != "windows" {
+		// Handle virtualenv and the current project dir.
+		defer DockerChown(path.Join(cfg.RepoInfo.RootDir, "build"))
+		defer DockerChown(".")
+	}
+	return test()
+}
+
+// integTestDockerComposeEnvVars returns the environment variables used for
+// executing docker-compose (not the variables passed into the containers).
+// docker-compose uses these when evaluating docker-compose.yml files.
+func integTestDockerComposeEnvVars(cfg *Settings) map[string]string {
+	return map[string]string{
+		"ES_BEATS":          cfg.ElasticBeatsDir,
+		"STACK_ENVIRONMENT": StackEnvironment,
+		// Deprecated use STACK_ENVIRONMENT instead (it's more descriptive).
+		"TESTING_ENVIRONMENT": StackEnvironment,
+	}
+}
+
+// dockerComposeProjectName returns the project name to use with docker-compose.
+// It is passed to docker-compose using the `-p` flag. And is passed to our
+// Go and Python testing libraries through the DOCKER_COMPOSE_PROJECT_NAME
+// environment variable.
+func (d *DockerIntegrationTester) dockerComposeProjectName(cfg *Settings) string {
+	commit, err := cfg.Build.CommitHash()
+	if err != nil {
+		panic(fmt.Errorf("failed to construct docker compose project name: %w", err))
+	}
+
+	version := strings.NewReplacer(".", "_").Replace(cfg.BeatQualifiedVersion())
+
+	projectName := "{{.BeatName}}_{{.Version}}_{{.ShortCommit}}-{{.StackEnvironment}}"
+	projectName = MustExpand(cfg, projectName, map[string]interface{}{
+		"StackEnvironment": StackEnvironment,
+		"ShortCommit":      commit[:10],
+		"Version":          version,
+	})
+	return projectName
+}
+
+// dockerComposeBuildImages builds all images in the docker-compose.yml file.
+func (d *DockerIntegrationTester) dockerComposeBuildImages(cfg *Settings) error {
+	fmt.Println(">> Building docker images")
+
+	composeEnv := integTestDockerComposeEnvVars(cfg)
+
+	args := []string{"-p", d.dockerComposeProjectName(cfg), "build", "--force-rm"}
+	if cfg.Docker.NoCache {
+		args = append(args, "--no-cache")
+	}
+
+	if cfg.Docker.ForcePull {
+		args = append(args, "--pull")
+	}
+
+	out := io.Discard
+	if mg.Verbose() {
+		out = os.Stderr
+	}
+
+	_, err := sh.Exec(
+		composeEnv,
+		out,
+		os.Stderr,
+		"docker-compose", args...,
+	)
+
+	if err != nil {
+		fmt.Println(">> Building docker images again")
+		//nolint:staticcheck // This sleep is to avoid hitting the docker build issues when resources are not available.
+		time.Sleep(10)
+		_, err = sh.Exec(
+			composeEnv,
+			out,
+			os.Stderr,
+			"docker-compose", args...,
+		)
+	}
+	return err
+}
