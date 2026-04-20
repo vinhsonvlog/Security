@@ -97,6 +97,54 @@ cd C:\path\to\elastic-agent
 
 Neu thanh cong se thay `Log sent successfully` tren client va log JSON tren stdout cua Logstash.
 
+## 6.1) Neu dang dung script Fleet sinh ra (.ps1/.bat) thi sua o dau?
+
+Quan trong: script Fleet sinh ra chu yeu de **enroll Elastic Agent vao Fleet Server** (control plane).
+No khong tu dong bien kenh data plane thanh PQC cho output Logstash.
+
+Can tach 2 viec:
+
+1. Enroll Agent -> Fleet Server qua HTTPS co CA xac thuc.
+2. Gui log -> Logstash qua `pqc-tls-gateway` de ep TLS 1.3 + `x25519mlkem768`.
+
+### A) Sua lenh install trong script Fleet-generated
+
+Vi du script goc (PowerShell) cua ban:
+
+```powershell
+.\elastic-agent.exe install --url=https://192.168.22.171:8220 --enrollment-token=<token>
+```
+
+Sua thanh (them CA, duong dan tuyet doi):
+
+```powershell
+.\elastic-agent.exe install `
+  --url=https://192.168.22.171:8220 `
+  --enrollment-token=<token> `
+  --certificate-authorities="C:\pqc-certs\ca.crt"
+```
+
+Luu y:
+
+- `--certificate-authorities` bat buoc dung duong dan tuyet doi.
+- Neu chung chi Fleet Server do CA khac ky, thay `ca.crt` bang dung CA do.
+
+### B) Dat file `ca.crt` va `ca.key` o dau?
+
+- Tren may Agent (Windows): chi can `ca.crt` (vi du `C:\pqc-certs\ca.crt`).
+- `ca.key` la private key cua CA: **khong copy len Agent**, chi giu o may CA/server de ky cert.
+
+### C) Chinh kenh gui log sang Logstash de co PQC
+
+Trong Fleet policy (output Logstash hoac output trung gian), host phai tro vao gateway:
+
+- `https://192.168.22.171:8443`
+
+Gateway (`examples/pqc-tls-gateway/main.go`) se ep TLS 1.3 + `x25519mlkem768`,
+sau do moi forward ve Logstash HTTP input noi bo (vi du `http://127.0.0.1:8080`).
+
+Neu chi sua lenh install/enroll ma khong doi output host qua gateway thi log van khong di qua lop ep PQC.
+
 ## 7) Kiem thu dao chieu Ubuntu -> Windows
 
 De test qua lai nhanh, chay y chang stack receiver tren Windows (Logstash + pqc-tls-gateway), doi endpoint sang IP Windows `192.168.22.172`, roi dung sender Linux gui nguoc lai.
