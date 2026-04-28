@@ -1,40 +1,42 @@
-# Cach build va chay nhanh (Windows 192.168.22.172 <-> Ubuntu 192.168.22.171)
+# Cach build va chay: Elastic Agent -> Proxy -> TLS1.3+PQC Gateway -> Logstash
 
-Ban nay la ban full de copy/paste truc tiep, gom ca:
+Muc tieu:
 
-- Luong test PQC TLS 1.3: Windows -> Ubuntu (Logstash)
-- Cach sua script Fleet-generated (.ps1/.bat)
-- Vi tri dat `ca.crt` va cach xu ly `ca.key`
+- Ep duong gui log di qua TLS 1.3 + PQC (`x25519mlkem768`).
+- Them proxy de Elastic Agent gui log ra ngoai duoc.
+- Co lenh chay nhanh de copy/paste.
 
-## 1) Build binary Go
+Luu y quan trong (doc truoc):
 
-Chay tren may build tai thu muc `elastic-agent`:
+- Trong Elastic Agent config hien tai, ban co the ep `ssl.supported_protocols: [TLSv1.3]`.
+- Nhung khong co field chinh thong de "khoa cung" `X25519MLKEM768` tren output.
+- Vi vay diem ep PQC phai dat o `pqc-tls-gateway` voi `-require-pqc true`.
+- Neu client khong negotiate `x25519mlkem768`, gateway se tu choi ket noi.
+
+---
+
+## 1) Build binary tren may build
 
 ```bash
 cd /Users/sonnguyen/Desktop/Security/elastic-agent
 
-# Build cho Ubuntu
+# Linux
 GOOS=linux GOARCH=amd64 go build -o build/pqc-tls-gateway-linux ./examples/pqc-tls-gateway
 GOOS=linux GOARCH=amd64 go build -o build/pqc-http-log-sender-linux ./examples/pqc-http-log-sender
 
-# Build cho Windows
+# Windows
 GOOS=windows GOARCH=amd64 go build -o build/pqc-tls-gateway-windows.exe ./examples/pqc-tls-gateway
 GOOS=windows GOARCH=amd64 go build -o build/pqc-http-log-sender-windows.exe ./examples/pqc-http-log-sender
 ```
 
-Copy file binary tuong ung sang tung may.
+Copy file:
 
-Checklist copy binary:
+- Ubuntu server: `build/pqc-tls-gateway-linux`
+- Windows agent: `build/pqc-http-log-sender-windows.exe` (de test nhanh)
 
-- Ubuntu can: `build/pqc-tls-gateway-linux`
-- Windows can: `build/pqc-http-log-sender-windows.exe`
-- Neu test nguoc thi copy them:
-  - Windows: `build/pqc-tls-gateway-windows.exe`
-  - Ubuntu: `build/pqc-http-log-sender-linux`
+---
 
-## 2) Tao cert cho 2 IP
-
-Chay tren Ubuntu:
+## 2) Tao cert cho server/client
 
 ```bash
 cd /Users/sonnguyen/Desktop/Security/elastic-agent/examples/pqc-crosshost/scripts
@@ -42,143 +44,178 @@ chmod +x gen-certs.sh
 ./gen-certs.sh 192.168.22.171 192.168.22.172
 ```
 
-Sau khi tao xong, copy 3 file nay sang may gui (Windows):
+Cert tao ra o:
+`/Users/sonnguyen/Desktop/Security/elastic-agent/examples/pqc-crosshost/certs`
+
+Copy sang Windows:
 
 - `ca.crt`
 - `client.crt`
 - `client.key`
 
-Vi tri tren Ubuntu:
-`/Users/sonnguyen/Desktop/Security/elastic-agent/examples/pqc-crosshost/certs`
+Khong copy `ca.key` len agent.
 
-Luu y bao mat quan trong:
-
-- Tren may Agent/Windows chi can `ca.crt` (va neu mTLS thi them `client.crt`, `client.key`).
-- `ca.key` la private key cua CA, KHONG copy len Agent. Chi giu o may CA/server de ky cert.
+---
 
 ## 3) Ubuntu chay Logstash receiver
 
 ```bash
 docker run --rm --name logstash-pqc -p 8080:8080 \
-	-v "/Users/sonnguyen/Desktop/Security/elastic-agent/examples/pqc-crosshost/logstash/pipeline:/usr/share/logstash/pipeline" \
-	docker.elastic.co/logstash/logstash:8.19.0
+  -v "/Users/sonnguyen/Desktop/Security/elastic-agent/examples/pqc-crosshost/logstash/pipeline:/usr/share/logstash/pipeline" \
+  docker.elastic.co/logstash/logstash:8.19.0
 ```
 
-Giu terminal nay de quan sat log den.
+---
 
-## 4) Ubuntu chay PQC TLS gateway
-
-Mo terminal moi tren Ubuntu:
+## 4) Ubuntu chay PQC TLS gateway (diem ep PQC)
 
 ```bash
 cd /Users/sonnguyen/Desktop/Security/elastic-agent
 ./build/pqc-tls-gateway-linux \
-	-listen :8443 \
-	-upstream http://127.0.0.1:8080 \
-	-cert ./examples/pqc-crosshost/certs/server.crt \
-	-key ./examples/pqc-crosshost/certs/server.key \
-	-require-pqc true \
-	-normalize-ecs true
+  -listen :8443 \
+  -upstream http://127.0.0.1:8080 \
+  -cert ./examples/pqc-crosshost/certs/server.crt \
+  -key ./examples/pqc-crosshost/certs/server.key \
+  -require-pqc true \
+  -normalize-ecs true
 ```
 
-Gateway se ep TLS 1.3 + nhom lai PQC `x25519mlkem768`, sau do forward ve Logstash `127.0.0.1:8080`.
+Gateway nay bat buoc:
 
-## 5) Windows gui log sang Ubuntu
+- TLS 1.3
+- curve `x25519mlkem768` (neu `-require-pqc true`)
 
-PowerShell tren Windows:
+---
 
-```powershell
-cd C:\path\to\elastic-agent
-.\build\pqc-http-log-sender-windows.exe `
-	-endpoint "https://192.168.22.171:8443/logs-pqc" `
-	-root-ca "C:\pqc-certs\ca.crt" `
-	-client-cert "C:\pqc-certs\client.crt" `
-	-client-key "C:\pqc-certs\client.key" `
-	-log '{"@timestamp":"2026-04-16T00:00:00Z","level":"info","message":"win -> ubuntu pqc tls13"}'
+## 5) (Khuyen nghi) Chay proxy de test duong Elastic Agent ra ngoai
+
+Neu ban chua co proxy doanh nghiep, dung Squid local:
+
+```bash
+docker run --rm --name squid -p 3128:3128 ubuntu/squid:latest
 ```
 
-Neu thanh cong:
+Gia su proxy IP la `192.168.22.171:3128`.
+Proxy phai ho tro HTTP CONNECT cho dich vu TLS (`:8443`).
 
-- Client in: `Log sent successfully`
-- Terminal Logstash tren Ubuntu hien log JSON.
+---
 
-Neu loi TLS/cert:
+## 6) Fleet-managed: enroll Agent co proxy (control plane)
 
-- Kiem tra endpoint dung IP trong SAN da tao o buoc 2.
-- Kiem tra `-root-ca` tro dung file `ca.crt`.
-- Kiem tra dong ho 2 may khong lech qua nhieu.
-
-## 5.1) Neu dang dung script Fleet sinh ra thi sua de copy
-
-Script Fleet-generated thuong dang nhu sau:
-
-```powershell
-$ProgressPreference = 'SilentlyContinue'
-Invoke-WebRequest -Uri https://artifacts.elastic.co/downloads/beats/elastic-agent/elastic-agent-9.3.3+build202604082258-windows-x86_64.zip -OutFile elastic-agent-9.3.3+build202604082258-windows-x86_64.zip
-Expand-Archive .\elastic-agent-9.3.3+build202604082258-windows-x86_64.zip -DestinationPath .
-cd elastic-agent-9.3.3+build202604082258-windows-x86_64
-.\elastic-agent.exe install --url=https://192.168.22.171:8220 --enrollment-token=<token>
-```
-
-Hay sua dong install thanh:
+PowerShell tren Windows (script Fleet sua lai):
 
 ```powershell
 .\elastic-agent.exe install `
-	--url=https://192.168.22.171:8220 `
-	--enrollment-token=<token> `
-	--certificate-authorities="C:\pqc-certs\ca.crt"
+  --url=https://192.168.22.171:8220 `
+  --enrollment-token=<token> `
+  --certificate-authorities="C:\pqc-certs\ca.crt" `
+  --proxy-url="http://192.168.22.171:3128"
+```
+
+Neu proxy can header CONNECT:
+
+```powershell
+.\elastic-agent.exe install `
+  --url=https://192.168.22.171:8220 `
+  --enrollment-token=<token> `
+  --certificate-authorities="C:\pqc-certs\ca.crt" `
+  --proxy-url="http://192.168.22.171:3128" `
+  --proxy-header "Proxy-Authorization=Basic <base64-user-pass>"
+```
+
+Luu y:
+
+- `--proxy-url` tren lenh install/enroll chu yeu cho kenh Agent <-> Fleet Server.
+
+---
+
+## 7) Fleet-managed: output log qua gateway + proxy (data plane)
+
+Trong Fleet policy output (Logstash output) dat:
+
+- Host output tro vao gateway: `192.168.22.171:8443`
+- Advanced YAML:
+
+```yaml
+proxy_url: "http://192.168.22.171:3128"
+ssl.enabled: true
+ssl.certificate_authorities: ["C:\\pqc-certs\\ca.crt"]
+ssl.supported_protocols: ["TLSv1.3"]
+```
+
+Neu proxy khong can cho dich vu nay:
+
+```yaml
+proxy_disable: true
 ```
 
 Quan trong:
 
-- `--certificate-authorities` chi anh huong kenh enroll Agent -> Fleet Server (control plane).
-- De log di qua TLS 1.3 + PQC, output log phai day qua gateway `https://192.168.22.171:8443` (data plane).
+- TLS1.3 duoc ep o output.
+- PQC duoc ep boi `pqc-tls-gateway`, khong phai field output cua Elastic Agent.
 
-## 5.2) Mau full script PowerShell de copy (fleet install + test sender)
+---
 
-```powershell
-$ProgressPreference = 'SilentlyContinue'
+## 8) Standalone mode (neu khong dung Fleet)
 
-$zip = 'elastic-agent-9.3.3+build202604082258-windows-x86_64.zip'
-$dir = 'elastic-agent-9.3.3+build202604082258-windows-x86_64'
-$fleetUrl = 'https://192.168.22.171:8220'
-$enrollToken = '<token>'
-$caPath = 'C:\pqc-certs\ca.crt'
+Mau `elastic-agent.yml`:
 
-Invoke-WebRequest -Uri "https://artifacts.elastic.co/downloads/beats/elastic-agent/$zip" -OutFile $zip
-Expand-Archive ".\\$zip" -DestinationPath . -Force
-Set-Location ".\\$dir"
+```yaml
+outputs:
+  default:
+    type: logstash
+    hosts: ["192.168.22.171:8443"]
+    proxy_url: "http://192.168.22.171:3128"
+    ssl:
+      enabled: true
+      certificate_authorities: ["C:/pqc-certs/ca.crt"]
+      supported_protocols: ["TLSv1.3"]
 
-.\elastic-agent.exe install `
-	--url=$fleetUrl `
-	--enrollment-token=$enrollToken `
-	--certificate-authorities=$caPath
-
-# Test gui 1 log qua PQC gateway
-.\build\pqc-http-log-sender-windows.exe `
-	-endpoint "https://192.168.22.171:8443/logs-pqc" `
-	-root-ca "C:\pqc-certs\ca.crt" `
-	-client-cert "C:\pqc-certs\client.crt" `
-	-client-key "C:\pqc-certs\client.key" `
-	-log '{"@timestamp":"2026-04-16T00:00:00Z","level":"info","message":"win -> ubuntu pqc tls13"}'
+inputs:
+  - type: filestream
+    id: test-filestream
+    use_output: default
+    streams:
+      - id: test-filestream-1
+        data_stream:
+          dataset: custom.pqc
+        paths:
+          - C:/temp/test.log
 ```
 
-## 6) Test nguoc Ubuntu -> Windows
+---
 
-Lam tuong tu stack receiver tren Windows (Logstash + pqc-tls-gateway),
-sau do tu Ubuntu dung `pqc-http-log-sender-linux` gui den `https://192.168.22.172:8443/logs-pqc`.
+## 9) Kiem tra nhanh
 
-## 7) Ghi chu
+1. Test sender Go qua gateway (xem duong TLS/PQC):
 
-- Bat buoc Go phai ho tro `tls.X25519MLKEM768`.
-- Gateway dang ep TLS 1.3 + nhom lai PQC `x25519mlkem768`.
-- Nho mo firewall port 8443 va 8080 tren may nhan.
+```powershell
+.\build\pqc-http-log-sender-windows.exe `
+  -endpoint "https://192.168.22.171:8443/logs-pqc" `
+  -proxy-url "http://192.168.22.171:3128" `
+  -proxy-headers "Proxy-Authorization=Basic <base64-user-pass>" `
+  -root-ca "C:\pqc-certs\ca.crt" `
+  -client-cert "C:\pqc-certs\client.crt" `
+  -client-key "C:\pqc-certs\client.key" `
+  -log '{"@timestamp":"2026-04-28T00:00:00Z","level":"info","message":"agent path via proxy+pqc"}'
+```
 
-## 8) Full quick run (tom tat 6 lenh)
+`-proxy-headers` la tuy chon, bo di neu proxy khong yeu cau auth/header.
 
-1. Build binary (buoc 1).
-2. Tao cert (buoc 2).
-3. Ubuntu chay Logstash (buoc 3).
-4. Ubuntu chay gateway PQC (buoc 4).
-5. Windows enroll Fleet voi `--certificate-authorities` (buoc 5.1).
-6. Windows gui log test qua `https://192.168.22.171:8443/logs-pqc` (buoc 5).
+2. Kiem tra Agent:
+
+```powershell
+elastic-agent status
+elastic-agent inspect output -o default
+```
+
+3. Kiem tra terminal Logstash phai thay event den.
+
+---
+
+## 10) Troubleshoot nhanh
+
+- Loi cert/SAN: xac nhan IP trong cert trung endpoint.
+- Log khong ra ngoai qua proxy: kiem tra proxy cho phep CONNECT toi `192.168.22.171:8443`.
+- Fleet enroll OK nhung data khong di: kiem tra lai output host trong policy da tro vao gateway PQC chua.
+- Neu gateway bat `-require-pqc true` ma client khong ho tro `x25519mlkem768` thi se bi reject (dung theo thiet ke).

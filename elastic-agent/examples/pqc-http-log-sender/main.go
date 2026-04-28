@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -28,6 +29,8 @@ type TLSOptions struct {
 	RootCAPath     string
 	ClientCertPath string
 	ClientKeyPath  string
+	ProxyURL       string
+	ProxyHeaders   []string
 }
 
 // BuildHTTPClient creates an HTTP client that enforces TLS 1.3 and prefers
@@ -66,6 +69,28 @@ func BuildHTTPClient(opts TLSOptions, timeout time.Duration) (*http.Client, erro
 		TLSClientConfig: tlsConfig,
 		// Keep HTTP/2 enabled for performance; TLS policy is still enforced above.
 		ForceAttemptHTTP2: true,
+	}
+	if opts.ProxyURL != "" {
+		parsedProxyURL, err := url.Parse(opts.ProxyURL)
+		if err != nil {
+			return nil, fmt.Errorf("parse proxy URL: %w", err)
+		}
+		transport.Proxy = http.ProxyURL(parsedProxyURL)
+		if len(opts.ProxyHeaders) > 0 {
+			transport.ProxyConnectHeader = make(http.Header, len(opts.ProxyHeaders))
+			for _, h := range opts.ProxyHeaders {
+				key, value, ok := strings.Cut(h, "=")
+				if !ok {
+					return nil, fmt.Errorf("invalid proxy header format %q, expected Key=Value", h)
+				}
+				key = strings.TrimSpace(key)
+				value = strings.TrimSpace(value)
+				if key == "" {
+					return nil, fmt.Errorf("invalid proxy header format %q: empty header key", h)
+				}
+				transport.ProxyConnectHeader.Add(key, value)
+			}
+		}
 	}
 
 	if timeout <= 0 {
@@ -135,6 +160,8 @@ func main() {
 		rootCAPath     string
 		clientCertPath string
 		clientKeyPath  string
+		proxyURL       string
+		proxyHeaders   string
 		timeout        time.Duration
 	)
 
@@ -143,13 +170,19 @@ func main() {
 	flag.StringVar(&rootCAPath, "root-ca", "", "Path to Root CA PEM file (optional)")
 	flag.StringVar(&clientCertPath, "client-cert", "", "Path to client certificate PEM file for mTLS (optional)")
 	flag.StringVar(&clientKeyPath, "client-key", "", "Path to client private key PEM file for mTLS (optional)")
+	flag.StringVar(&proxyURL, "proxy-url", "", "Proxy URL (for example, http://proxy:3128)")
+	flag.StringVar(&proxyHeaders, "proxy-headers", "", "Comma-separated CONNECT proxy headers in Key=Value format")
 	flag.DurationVar(&timeout, "timeout", defaultTimeout, "HTTP timeout")
 	flag.Parse()
+
+	headerValues := splitAndTrimCSV(proxyHeaders)
 
 	client, err := BuildHTTPClient(TLSOptions{
 		RootCAPath:     rootCAPath,
 		ClientCertPath: clientCertPath,
 		ClientKeyPath:  clientKeyPath,
+		ProxyURL:       proxyURL,
+		ProxyHeaders:   headerValues,
 	}, timeout)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Build client error: %v\n", err)
@@ -164,4 +197,19 @@ func main() {
 	}
 
 	fmt.Println("Log sent successfully")
+}
+
+func splitAndTrimCSV(in string) []string {
+	if strings.TrimSpace(in) == "" {
+		return nil
+	}
+	parts := strings.Split(in, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
